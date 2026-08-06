@@ -11,6 +11,11 @@ RUN cd web && npm run build
 # Stage 2 — the actual runtime image
 FROM node:20-bookworm-slim
 
+ARG COMMIT=unknown
+ARG BUILD_NUMBER=dev
+ENV APP_COMMIT=$COMMIT
+ENV APP_BUILD_NUMBER=$BUILD_NUMBER
+
 # better-sqlite3 needs to compile a native module
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*

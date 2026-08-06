@@ -539,6 +539,15 @@ function EmptyState({ text }) {
 }
 
 /* ---------- main app ---------- */
+function VersionBadge({ version }) {
+  if (!version) return null;
+  return (
+    <div style={{ position: "fixed", bottom: 8, right: 10, fontSize: 10.5, fontFamily: "var(--font-mono)", color: "var(--ink-soft)", opacity: 0.55, zIndex: 40, pointerEvents: "none" }}>
+      build #{version.build} · {version.commit}
+    </div>
+  );
+}
+
 function App() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
@@ -549,6 +558,11 @@ function App() {
   const [catFilter, setCatFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("");
   const [openTool, setOpenTool] = useState(null);
+  const [version, setVersion] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/version").then((r) => r.json()).then(setVersion).catch(() => {});
+  }, []);
 
   const loadData = async () => {
     const [t, b] = await Promise.all([api("/tools"), api("/bookings")]);
@@ -588,8 +602,8 @@ function App() {
     return true;
   }), [tools, query, catFilter, dateFilter, bookings]);
 
-  if (loading) return <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}><div style={{ color: "var(--ink-soft)", fontFamily: "var(--font-mono)", fontSize: 13 }}>opening the shed…</div></div>;
-  if (!user) return <div style={shellStyle}><AuthScreen onAuthed={onAuthed} /></div>;
+  if (loading) return <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}><div style={{ color: "var(--ink-soft)", fontFamily: "var(--font-mono)", fontSize: 13 }}>opening the shed…</div><VersionBadge version={version} /></div>;
+  if (!user) return <div style={shellStyle}><AuthScreen onAuthed={onAuthed} /><VersionBadge version={version} /></div>;
 
   const myTools = tools.filter((t) => t.isMine);
   const myBookings = bookings.filter((b) => b.isMine).sort((a, b) => a.start.localeCompare(b.start));
@@ -693,6 +707,7 @@ function App() {
       </main>
 
       {openTool && <ToolDetail tool={openTool} bookings={bookings} onClose={() => setOpenTool(null)} onReserve={addBooking} onDelete={deleteTool} onPhotoUpdated={updateToolPhoto} />}
+      <VersionBadge version={version} />
     </div>
   );
 }

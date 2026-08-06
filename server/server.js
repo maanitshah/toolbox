@@ -65,6 +65,13 @@ function rangesOverlap(aStart, aEnd, bStart, bEnd) {
 }
 
 /* ================= AUTH ================= */
+app.get("/api/version", (req, res) => {
+  res.json({
+    commit: (process.env.APP_COMMIT || "unknown").slice(0, 7),
+    build: process.env.APP_BUILD_NUMBER || "dev",
+  });
+});
+
 app.post("/api/auth/signup", async (req, res) => {
   const { name, address, email, password } = req.body || {};
   if (!name?.trim() || !address?.trim() || !email?.trim() || !password || password.length < 8) {
