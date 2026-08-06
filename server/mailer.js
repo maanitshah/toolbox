@@ -25,8 +25,9 @@ async function sendMail({ to, subject, text }) {
   }
   try {
     await t.sendMail({ from: `"Pear Close Toolbox" <${from}>`, to, subject, text });
+    console.log(`[mailer] sent to ${to} — "${subject}"`);
   } catch (err) {
-    console.error("[mailer] Failed to send email:", err.message);
+    console.error(`[mailer] FAILED sending to ${to}:`, err.message);
   }
 }
 
@@ -38,4 +39,12 @@ async function sendBookingNotification({ ownerEmail, ownerName, borrowerName, to
   });
 }
 
-module.exports = { sendMail, sendBookingNotification };
+async function sendPasswordResetEmail({ to, name, resetUrl }) {
+  await sendMail({
+    to,
+    subject: "Reset your Pear Close Toolbox password",
+    text: `Hi ${name.split(" ")[0]},\n\nSomeone (hopefully you) asked to reset the password on your Pear Close Toolbox account.\n\nTo set a new password, open this link within the next hour:\n${resetUrl}\n\nIf you didn't request this, you can ignore this email — your password won't change.\n\n— Pear Close Toolbox`,
+  });
+}
+
+module.exports = { sendMail, sendBookingNotification, sendPasswordResetEmail };

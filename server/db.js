@@ -49,5 +49,8 @@ ensureColumn("tools", "model", "model TEXT DEFAULT ''");
 ensureColumn("tools", "power_type", "power_type TEXT DEFAULT ''");
 ensureColumn("tools", "serial_number", "serial_number TEXT DEFAULT ''");
 ensureColumn("tools", "photo_updated_at", "photo_updated_at INTEGER");
+ensureColumn("users", "reset_token_hash", "reset_token_hash TEXT");
+ensureColumn("users", "reset_token_expires", "reset_token_expires INTEGER");
+ensureColumn("users", "is_admin", "is_admin INTEGER DEFAULT 0");
 
 module.exports = db;

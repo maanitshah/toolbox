@@ -55,6 +55,7 @@ Fill in three things in `.env`:
 - `SMTP_USER` — your Gmail address
 - `SMTP_PASS` — the 16-character app password from Step 1
 - `SMTP_FROM` — usually the same as `SMTP_USER`
+- `ADMIN_EMAILS` — your own email (and anyone else you want as an admin), comma-separated. Grants access to the Admin tab (manage accounts, reset passwords, add/remove tools for anyone). This is applied when the container starts, so **create your account first, then set this and restart** — see note below.
 
 Leave `SMTP_HOST` and `SMTP_PORT` as-is if you're using Gmail.
 

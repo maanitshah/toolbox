@@ -2,6 +2,54 @@
 
 All notable changes to Pear Close Toolbox are logged here, newest first.
 
+## v1.6.0 — 2026-08-05
+
+**Added**
+- Admin panel (new "Admin" tab, visible only to admins). Lets an admin:
+  - See every account on the street, with their tool count
+  - Create an account manually on someone's behalf
+  - Reset anyone's password — generates a one-time temporary password to hand off directly (no email required)
+  - Grant or revoke admin access for other accounts
+  - Remove an account entirely (cascades to their tool listings and bookings, and cleans up any photo files)
+  - Remove any tool from the shelf, regardless of owner
+  - Add a tool "on behalf of" any account, from the same Add a Tool form everyone else uses
+- New `ADMIN_EMAILS` setting in `.env` — comma-separated list of emails to grant admin access to. Applied on container startup, so a restart is needed after changing it. See the updated `.env.example`.
+
+**Note:** if you're deploying this from a build several versions behind (as you are — last deploy was before the image `contain` fix), this update also brings in everything from v1.3.3–v1.5.0: photo display fix, forgot-password flow, and email validation with an account-repair path. See those entries below for details.
+
+## v1.5.0 — 2026-08-05
+
+**Added**
+- Email format validation on sign-up, both client-side (inline feedback as you type) and server-side (authoritative — closes the gap that let an account get created with `maanitshah` as its "email," which silently broke reservation notifications for that account).
+- Account settings on the "My stuff" tab: shows your current email, with a "Change" option that requires your current password to confirm it's really you. This is also the fix for any account that got created with a bad email before this validation existed — sign in, go to My stuff, change it, and your existing tool listings and account stay exactly where they are.
+- If your account's email doesn't look valid, you'll now see a warning banner on "My stuff" and a small red dot on that tab in the nav, so it's hard to miss.
+
+## v1.4.0 — 2026-08-05
+
+**Added**
+- Forgot-password flow. "Forgot your password?" on the login screen sends a one-hour reset link to the account's email (via your existing SMTP config). Clicking it opens a "set a new password" screen, and the link can't be reused after it's used once or once it expires.
+- The response to a reset request is identical whether or not the email actually has an account, so the feature can't be used to check which of your neighbors' emails are registered.
+
+## v1.3.3 — 2026-08-05
+
+**Fixed**
+- Tool photos were being cropped (`object-fit: cover`) on both the browse-grid cards and the detail/reservation view. Switched to `object-fit: contain`, so the whole photo is always visible — any empty space around it is filled with the app's background color instead of cutting off part of the image.
+
+**Changed**
+- The mailer now logs a confirmation line (`[mailer] sent to ...`) on every successful send, not just failures — makes it possible to confirm from `docker compose logs` whether a notification email actually went out, without needing to guess.
+
+## v1.3.2 — 2026-08-05
+
+**Fixed**
+- `docker-compose.registry.yml` now sets `pull_policy: always`, so restarting the container always re-checks GHCR for the current `latest` image instead of silently reusing whatever was pulled last time. Previously, Synology Container Manager's "Build" action on a registry-based (non-`build:`) service would just restart the existing local image without pulling — updates required either the Registry tab (which doesn't work with GHCR — see note below) or manually pinning a specific commit-sha tag each time.
+- Documented why: Synology's Registry tab search is built around Docker Hub's legacy search API, which GHCR (and most non-Docker-Hub registries) don't implement. Pulling a *known* image reference always worked fine — only the search-to-discover-and-download flow in that specific UI tab was the problem.
+
+## v1.3.1 — 2026-08-05
+
+**Added**
+- A small build indicator in the bottom-right corner of every screen (e.g. `build #7 · a1b2c3d`), so you can confirm at a glance whether the NAS is actually running the version you just pushed — compare it against the run number and commit shown on the GitHub Actions tab.
+- `GET /api/version` — the endpoint behind the badge, in case you want to check it via `curl` instead.
+
 ## v1.3.0 — 2026-08-05
 
 **Added**

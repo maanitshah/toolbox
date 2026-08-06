@@ -204,25 +204,35 @@ function ToolCard({ tool, bookings, onOpen }) {
 }
 
 /* ---------- auth screen ---------- */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function AuthScreen({ onAuthed }) {
-  const [mode, setMode] = useState("login");
+  const [mode, setMode] = useState("login"); // "login" | "signup" | "forgot"
   const [form, setForm] = useState({ name: "", address: "", email: "", password: "" });
   const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     setErr(""); setBusy(true);
     try {
-      const { user } = await api(mode === "login" ? "/auth/login" : "/auth/signup", {
-        method: "POST",
-        body: mode === "login" ? { email: form.email, password: form.password } : form,
-      });
-      onAuthed(user);
+      if (mode === "forgot") {
+        await api("/auth/forgot", { method: "POST", body: { email: form.email } });
+        setNotice("If that email has an account, a reset link is on its way — check your inbox (and spam folder).");
+      } else {
+        const { user } = await api(mode === "login" ? "/auth/login" : "/auth/signup", {
+          method: "POST",
+          body: mode === "login" ? { email: form.email, password: form.password } : form,
+        });
+        onAuthed(user);
+      }
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
 
-  const canGo = mode === "login" ? form.email && form.password : form.name && form.address && form.email && form.password.length >= 8;
+  const canGo = mode === "forgot" ? EMAIL_RE.test(form.email)
+    : mode === "login" ? form.email && form.password
+    : form.name && form.address && EMAIL_RE.test(form.email) && form.password.length >= 8;
 
   return (
     <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -230,24 +240,72 @@ function AuthScreen({ onAuthed }) {
         <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, letterSpacing: 1.5, color: "var(--amber-dark)", marginBottom: 8 }}>PEAR CLOSE · PILOT</div>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 34, color: "var(--ink)", margin: 0, lineHeight: 1.05 }}>Pear Close<br />Toolbox</h1>
         <p style={{ color: "var(--ink-soft)", fontSize: 15, lineHeight: 1.5, marginTop: 12 }}>
-          {mode === "login" ? "Sign in to browse and reserve." : "Create an account so owners can email you, and you can email them, when something's reserved."}
+          {mode === "login" && "Sign in to browse and reserve."}
+          {mode === "signup" && "Create an account so owners can email you, and you can email them, when something's reserved."}
+          {mode === "forgot" && "Enter your email and we'll send a link to set a new password."}
         </p>
+        {notice ? (
+          <div style={{ marginTop: 20, fontSize: 13.5, color: "var(--green-dark)", background: "rgba(79,122,61,0.12)", borderRadius: 8, padding: "12px 14px", lineHeight: 1.5 }}>{notice}</div>
+        ) : (
+          <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
+            {mode === "signup" && <>
+              <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} />
+              <input placeholder="House number, e.g. 9 Pear Close" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={inputStyle} />
+            </>}
+            <input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} />
+            {form.email && !EMAIL_RE.test(form.email) && <div style={{ fontSize: 12, color: "var(--rust)" }}>That doesn't look like a full email address (needs an @ and a domain, like you@gmail.com).</div>}
+            {mode !== "forgot" && (
+              <input type="password" placeholder={mode === "signup" ? "Password (8+ characters)" : "Password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={inputStyle} onKeyDown={(e) => e.key === "Enter" && canGo && submit()} />
+            )}
+            {err && <div style={{ fontSize: 12.5, color: "var(--rust)", display: "flex", gap: 6, alignItems: "center" }}><Icon name="alertTriangle" size={13} />{err}</div>}
+            <button disabled={!canGo || busy} onClick={submit} style={{ ...primaryBtnStyle, opacity: canGo && !busy ? 1 : 0.5, cursor: canGo && !busy ? "pointer" : "not-allowed", marginTop: 4 }}>
+              {busy ? "One sec…" : mode === "login" ? "Sign in →" : mode === "signup" ? "Create account →" : "Send reset link →"}
+            </button>
+            {mode === "login" && (
+              <button onClick={() => { setMode("forgot"); setErr(""); }} style={{ all: "unset", cursor: "pointer", fontSize: 12.5, color: "var(--ink-soft)", textAlign: "center", padding: "4px 0" }}>Forgot your password?</button>
+            )}
+          </div>
+        )}
+        <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); setNotice(""); }} style={{ ...ghostBtnStyle, marginTop: 14, width: "100%" }}>
+          {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
+        </button>
+        {mode !== "forgot" && <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 16, opacity: 0.8 }}>Your email is only used to notify you when a neighbor reserves one of your tools.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- reset password screen (reached via emailed link) ---------- */
+function ResetPasswordScreen({ token, onDone }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const canGo = password.length >= 8 && password === confirm;
+
+  const submit = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const { user } = await api("/auth/reset", { method: "POST", body: { token, password } });
+      onDone(user);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ maxWidth: 400, width: "100%" }}>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, letterSpacing: 1.5, color: "var(--amber-dark)", marginBottom: 8 }}>PEAR CLOSE · PILOT</div>
+        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 28, color: "var(--ink)", margin: 0 }}>Set a new password</h1>
         <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
-          {mode === "signup" && <>
-            <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} />
-            <input placeholder="House number, e.g. 9 Pear Close" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={inputStyle} />
-          </>}
-          <input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} />
-          <input type="password" placeholder={mode === "signup" ? "Password (8+ characters)" : "Password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={inputStyle} onKeyDown={(e) => e.key === "Enter" && canGo && submit()} />
+          <input type="password" placeholder="New password (8+ characters)" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+          <input type="password" placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} style={inputStyle} onKeyDown={(e) => e.key === "Enter" && canGo && submit()} />
+          {confirm && password !== confirm && <div style={{ fontSize: 12.5, color: "var(--rust)" }}>Passwords don't match yet.</div>}
           {err && <div style={{ fontSize: 12.5, color: "var(--rust)", display: "flex", gap: 6, alignItems: "center" }}><Icon name="alertTriangle" size={13} />{err}</div>}
           <button disabled={!canGo || busy} onClick={submit} style={{ ...primaryBtnStyle, opacity: canGo && !busy ? 1 : 0.5, cursor: canGo && !busy ? "pointer" : "not-allowed", marginTop: 4 }}>
-            {busy ? "One sec…" : mode === "login" ? "Sign in →" : "Create account →"}
+            {busy ? "One sec…" : "Set password and sign in →"}
           </button>
         </div>
-        <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); }} style={{ ...ghostBtnStyle, marginTop: 14, width: "100%" }}>
-          {mode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
-        </button>
-        <p style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 16, opacity: 0.8 }}>Your email is only used to notify you when a neighbor reserves one of your tools.</p>
       </div>
     </div>
   );
@@ -275,7 +333,7 @@ function PhotoPicker({ preview, onFile, onClear, busy }) {
   );
 }
 
-function AddTool({ onAdd, onDone, onPhotoUpdated }) {
+function AddTool({ onAdd, onDone, onPhotoUpdated, adminUsers, currentUserId }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("power");
   const [condition, setCondition] = useState(CONDITIONS[1]);
@@ -284,6 +342,7 @@ function AddTool({ onAdd, onDone, onPhotoUpdated }) {
   const [powerType, setPowerType] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
   const [description, setDescription] = useState("");
+  const [ownerId, setOwnerId] = useState(currentUserId || "");
   const [photoBlob, setPhotoBlob] = useState(null);
   const [preview, setPreview] = useState(null);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -305,7 +364,7 @@ function AddTool({ onAdd, onDone, onPhotoUpdated }) {
   const submit = async () => {
     setBusy(true); setErr("");
     try {
-      const tool = await onAdd({ name: name.trim(), category, condition, description: description.trim(), brand: brand.trim(), model: model.trim(), powerType, serialNumber: serialNumber.trim() });
+      const tool = await onAdd({ name: name.trim(), category, condition, description: description.trim(), brand: brand.trim(), model: model.trim(), powerType, serialNumber: serialNumber.trim(), ownerId: ownerId || undefined });
       if (photoBlob && tool?.id) { const photoUrl = await uploadPhoto(tool.id, photoBlob); onPhotoUpdated && onPhotoUpdated(tool.id, photoUrl); }
       setName(""); setDescription(""); setCondition(CONDITIONS[1]); setCategory("power");
       setBrand(""); setModel(""); setPowerType(""); setSerialNumber(""); clearPhoto();
@@ -322,6 +381,13 @@ function AddTool({ onAdd, onDone, onPhotoUpdated }) {
         <label style={labelStyle}>Photo
           <PhotoPicker preview={preview} onFile={handleFile} onClear={clearPhoto} busy={photoBusy} />
         </label>
+        {adminUsers && adminUsers.length > 0 && (
+          <label style={labelStyle}>List this on behalf of
+            <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={{ ...inputStyle, marginTop: 4 }}>
+              {adminUsers.map((u) => <option key={u.id} value={u.id}>{u.id === currentUserId ? `Myself (${u.name})` : `${u.name} · ${u.address}`}</option>)}
+            </select>
+          </label>
+        )}
         <label style={labelStyle}>Tool name
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pressure Washer" style={inputStyle} />
         </label>
@@ -417,8 +483,8 @@ function ToolDetail({ tool, bookings, onClose, onReserve, onDelete, onPhotoUpdat
     <div style={{ position: "fixed", inset: 0, background: "rgba(20,18,10,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="modal-sheet" style={{ background: "var(--bg-card)", width: "100%", maxWidth: 640, maxHeight: "92vh", overflowY: "auto", borderRadius: "16px 16px 0 0", padding: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.25)" }}>
         {tool.photoUrl && (
-          <div style={{ margin: "-24px -24px 16px", position: "relative" }}>
-            <img src={tool.photoUrl} alt={tool.name} style={{ width: "100%", maxHeight: 260, objectFit: "cover", display: "block" }} />
+          <div style={{ margin: "-24px -24px 16px", position: "relative", background: "var(--bg)" }}>
+            <img src={tool.photoUrl} alt={tool.name} style={{ width: "100%", maxHeight: 320, objectFit: "contain", display: "block" }} />
             <button onClick={onClose} style={{ ...iconBtnStyle, position: "absolute", top: 12, right: 12, background: "rgba(251,248,240,0.9)" }}><Icon name="x" size={16} /></button>
           </div>
         )}
@@ -534,6 +600,166 @@ function Guidelines() {
   );
 }
 
+function AccountSettings({ user, onUpdated }) {
+  const [editing, setEditing] = useState(false);
+  const [email, setEmail] = useState(user.email || "");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const looksBad = !EMAIL_RE.test(user.email || "");
+  const canSave = EMAIL_RE.test(email) && currentPassword && !busy;
+
+  const save = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const { user: updated } = await api("/me/email", { method: "PATCH", body: { newEmail: email, currentPassword } });
+      onUpdated(updated);
+      setNotice("Email updated."); setEditing(false); setCurrentPassword("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div>
+      <h2 style={sectionTitleStyle}>Account</h2>
+      {looksBad && !editing && (
+        <div style={{ fontSize: 13, color: "var(--rust)", background: "rgba(181,68,46,0.1)", borderRadius: 8, padding: "10px 13px", marginTop: 8, marginBottom: 4, display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>"{user.email}" doesn't look like a real email address — you won't get reservation notifications until this is fixed.</span>
+        </div>
+      )}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 10, padding: "14px 16px", marginTop: 8, maxWidth: 420 }}>
+        {!editing ? (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 14 }}>{user.email || <em style={{ color: "var(--ink-soft)" }}>no email on file</em>}</div>
+            <button onClick={() => { setEditing(true); setNotice(""); }} style={{ ...ghostBtnStyle, padding: "6px 12px", flexShrink: 0 }}>Change</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <label style={labelStyle}>New email
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+            </label>
+            <label style={labelStyle}>Current password (to confirm it's you)
+              <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={inputStyle} />
+            </label>
+            {err && <div style={{ fontSize: 12.5, color: "var(--rust)", display: "flex", gap: 6, alignItems: "center" }}><Icon name="alertTriangle" size={13} />{err}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={!canSave} onClick={save} style={{ ...primaryBtnStyle, padding: "9px 16px", opacity: canSave ? 1 : 0.5, cursor: canSave ? "pointer" : "not-allowed" }}>{busy ? "Saving…" : "Save"}</button>
+              <button onClick={() => { setEditing(false); setEmail(user.email || ""); setErr(""); }} style={{ ...ghostBtnStyle, padding: "9px 16px" }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {notice && <div style={{ fontSize: 12.5, color: "var(--green-dark)", marginTop: 8 }}>{notice}</div>}
+    </div>
+  );
+}
+
+/* ---------- admin panel ---------- */
+function AdminPanel({ adminUsers, tools, currentUserId, onCreateAccount, onResetPassword, onToggleAdmin, onDeleteAccount, onDeleteTool }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ name: "", address: "", email: "", password: "" });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [tempPasswordFor, setTempPasswordFor] = useState(null); // { name, password }
+
+  const canCreate = form.name && form.address && EMAIL_RE.test(form.email) && form.password.length >= 8;
+
+  const createAccount = async () => {
+    setErr(""); setBusy(true);
+    try {
+      await onCreateAccount(form);
+      setForm({ name: "", address: "", email: "", password: "" }); setShowCreate(false);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const resetPw = async (u) => {
+    try { const tempPassword = await onResetPassword(u.id); setTempPasswordFor({ name: u.name, password: tempPassword }); }
+    catch (e) { setErr(e.message); }
+  };
+
+  const removeAccount = async (u) => {
+    if (!window.confirm(`Remove ${u.name}'s account? This also deletes ${u.toolCount} tool(s) they listed and any bookings tied to them. This can't be undone.`)) return;
+    try { await onDeleteAccount(u.id); } catch (e) { setErr(e.message); }
+  };
+
+  const removeTool = async (t) => {
+    if (!window.confirm(`Remove "${t.name}" from the shelf? This can't be undone.`)) return;
+    try { await onDeleteTool(t.id); } catch (e) { setErr(e.message); }
+  };
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <h2 style={sectionTitleStyle}>Admin</h2>
+      <p style={{ color: "var(--ink-soft)", fontSize: 14, marginTop: -4, marginBottom: 18 }}>Manage accounts and listings for the street.</p>
+
+      {err && <div style={{ fontSize: 12.5, color: "var(--rust)", display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}><Icon name="alertTriangle" size={13} />{err}</div>}
+
+      {tempPasswordFor && (
+        <div style={{ background: "rgba(224,149,46,0.15)", border: "1px solid var(--amber)", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13.5 }}>
+          Temporary password for <strong>{tempPasswordFor.name}</strong>: <span style={{ fontFamily: "var(--font-mono)", background: "var(--bg-card)", padding: "2px 6px", borderRadius: 4 }}>{tempPasswordFor.password}</span>
+          <div style={{ marginTop: 6, color: "var(--ink-soft)" }}>Share this with them directly — it won't be shown again. They can change it themselves once signed in.</div>
+          <button onClick={() => setTempPasswordFor(null)} style={{ ...ghostBtnStyle, padding: "5px 10px", marginTop: 8 }}>Dismiss</button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20, marginBottom: 8 }}>
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 15 }}>Accounts ({adminUsers.length})</div>
+        <button onClick={() => setShowCreate(!showCreate)} style={{ ...ghostBtnStyle, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}><Icon name="plus" size={13} />Create account</button>
+      </div>
+
+      {showCreate && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 10, padding: "14px 16px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={inputStyle} />
+            <input placeholder="House number" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={inputStyle} />
+          </div>
+          <input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} />
+          <input type="password" placeholder="Initial password (8+ characters)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={inputStyle} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button disabled={!canCreate || busy} onClick={createAccount} style={{ ...primaryBtnStyle, padding: "9px 16px", opacity: canCreate ? 1 : 0.5, cursor: canCreate ? "pointer" : "not-allowed" }}>{busy ? "Creating…" : "Create"}</button>
+            <button onClick={() => setShowCreate(false)} style={{ ...ghostBtnStyle, padding: "9px 16px" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {adminUsers.map((u) => (
+          <div key={u.id} style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 9, padding: "11px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 14 }}>
+                {u.name} {u.isAdmin && <span style={{ fontSize: 10.5, fontFamily: "var(--font-mono)", color: "var(--amber-dark)", marginLeft: 4 }}>ADMIN</span>}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>{u.address} · {u.email} · {u.toolCount} tool{u.toolCount === 1 ? "" : "s"}</div>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <button onClick={() => resetPw(u)} style={{ ...ghostBtnStyle, padding: "6px 10px", fontSize: 12.5 }}>Reset password</button>
+              {u.id !== currentUserId && (
+                <button onClick={() => onToggleAdmin(u.id, !u.isAdmin)} style={{ ...ghostBtnStyle, padding: "6px 10px", fontSize: 12.5 }}>{u.isAdmin ? "Revoke admin" : "Make admin"}</button>
+              )}
+              {u.id !== currentUserId && (
+                <button onClick={() => removeAccount(u)} style={{ ...ghostBtnStyle, padding: "6px 10px", fontSize: 12.5, color: "var(--rust)", borderColor: "var(--rust)" }}>Remove</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 15, marginTop: 28, marginBottom: 8 }}>All tools ({tools.length})</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {tools.map((t) => (
+          <div key={t.id} style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 9, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 13.5 }}>{t.name} <span style={{ color: "var(--ink-soft)" }}>— {t.ownerName}</span></div>
+            <button onClick={() => removeTool(t)} style={{ ...ghostBtnStyle, padding: "5px 10px", fontSize: 12, color: "var(--rust)", borderColor: "var(--rust)" }}>Remove</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ text }) {
   return <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: "26px 16px", textAlign: "center", color: "var(--ink-soft)", fontSize: 13.5 }}>{text}</div>;
 }
@@ -559,6 +785,12 @@ function App() {
   const [dateFilter, setDateFilter] = useState("");
   const [openTool, setOpenTool] = useState(null);
   const [version, setVersion] = useState(null);
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("reset"));
+  const [adminUsers, setAdminUsers] = useState([]);
+
+  const loadAdminUsers = async () => {
+    try { const { users } = await api("/admin/users"); setAdminUsers(users); } catch { /* not an admin, or not loaded yet */ }
+  };
 
   useEffect(() => {
     fetch("/api/version").then((r) => r.json()).then(setVersion).catch(() => {});
@@ -575,16 +807,30 @@ function App() {
         const me = await api("/me");
         setUser(me.user);
         await loadData();
+        if (me.user.isAdmin) await loadAdminUsers();
       } catch { setUser(null); }
       setLoading(false);
     })();
   }, []);
 
-  const onAuthed = async (u) => { setUser(u); await loadData(); };
-  const signOut = async () => { await api("/auth/logout", { method: "POST" }); setUser(null); setTools([]); setBookings([]); };
+  const onAuthed = async (u) => { setUser(u); await loadData(); if (u.isAdmin) await loadAdminUsers(); };
+  const onResetDone = async (u) => {
+    window.history.replaceState({}, "", window.location.pathname); // scrub the token out of the URL
+    setUser(u); await loadData(); if (u.isAdmin) await loadAdminUsers();
+  };
+  const signOut = async () => { await api("/auth/logout", { method: "POST" }); setUser(null); setTools([]); setBookings([]); setAdminUsers([]); };
 
   const addTool = async (payload) => { const { tool } = await api("/tools", { method: "POST", body: payload }); setTools((prev) => [tool, ...prev]); return tool; };
   const deleteTool = async (toolId) => { await api(`/tools/${toolId}`, { method: "DELETE" }); setTools((prev) => prev.filter((t) => t.id !== toolId)); };
+
+  const adminCreateAccount = async (payload) => { const { user: created } = await api("/admin/users", { method: "POST", body: payload }); setAdminUsers((prev) => [...prev, created]); };
+  const adminResetPassword = async (userId) => { const { tempPassword } = await api(`/admin/users/${userId}/reset-password`, { method: "POST" }); return tempPassword; };
+  const adminToggleAdmin = async (userId, isAdminNext) => { await api(`/admin/users/${userId}/admin`, { method: "PATCH", body: { isAdmin: isAdminNext } }); setAdminUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, isAdmin: isAdminNext } : u))); };
+  const adminDeleteAccount = async (userId) => {
+    await api(`/admin/users/${userId}`, { method: "DELETE" });
+    setAdminUsers((prev) => prev.filter((u) => u.id !== userId));
+    await loadData(); // tools/bookings owned by or booked from the removed account are gone server-side (cascade)
+  };
   const addBooking = async (payload) => { const { booking } = await api("/bookings", { method: "POST", body: payload }); setBookings((prev) => [...prev, booking]); setOpenTool(null); };
   const cancelBooking = async (bookingId) => { await api(`/bookings/${bookingId}`, { method: "DELETE" }); setBookings((prev) => prev.filter((b) => b.id !== bookingId)); };
   const updateToolPhoto = (toolId, photoUrl) => {
@@ -602,6 +848,7 @@ function App() {
     return true;
   }), [tools, query, catFilter, dateFilter, bookings]);
 
+  if (resetToken && !user) return <div style={shellStyle}><ResetPasswordScreen token={resetToken} onDone={onResetDone} /><VersionBadge version={version} /></div>;
   if (loading) return <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}><div style={{ color: "var(--ink-soft)", fontFamily: "var(--font-mono)", fontSize: 13 }}>opening the shed…</div><VersionBadge version={version} /></div>;
   if (!user) return <div style={shellStyle}><AuthScreen onAuthed={onAuthed} /><VersionBadge version={version} /></div>;
 
@@ -627,12 +874,17 @@ function App() {
       </header>
 
       <nav className="nav-scroll" style={{ display: "flex", gap: 6, padding: "12px 20px 0", borderBottom: "1px solid var(--line)", flexWrap: "nowrap" }}>
-        {[["browse", "Browse"], ["mine", "My stuff"], ["add", "Add a tool"], ["guidelines", "Guidelines"]].map(([tid, label]) => (
+        {[["browse", "Browse"], ["mine", "My stuff"], ["add", "Add a tool"], ["guidelines", "Guidelines"], ...(user.isAdmin ? [["admin", "Admin"]] : [])].map(([tid, label]) => (
           <button key={tid} onClick={() => setTab(tid)} style={{
             all: "unset", cursor: "pointer", padding: "9px 14px", fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 13.5,
             color: tab === tid ? "var(--green-dark)" : "var(--ink-soft)", borderBottom: tab === tid ? "2.5px solid var(--green)" : "2.5px solid transparent",
-            whiteSpace: "nowrap", flexShrink: 0,
-          }}>{label}</button>
+            whiteSpace: "nowrap", flexShrink: 0, position: "relative",
+          }}>
+            {label}
+            {tid === "mine" && !EMAIL_RE.test(user.email || "") && (
+              <span style={{ position: "absolute", top: 6, right: 2, width: 6, height: 6, borderRadius: "50%", background: "var(--rust)" }} />
+            )}
+          </button>
         ))}
       </nav>
 
@@ -669,11 +921,24 @@ function App() {
           </>
         )}
 
-        {tab === "add" && <AddTool onAdd={addTool} onDone={() => setTab("browse")} onPhotoUpdated={updateToolPhoto} />}
+        {tab === "add" && <AddTool onAdd={addTool} onDone={() => setTab("browse")} onPhotoUpdated={updateToolPhoto} adminUsers={user.isAdmin ? adminUsers : null} currentUserId={user.id} />}
         {tab === "guidelines" && <Guidelines />}
+        {tab === "admin" && user.isAdmin && (
+          <AdminPanel
+            adminUsers={adminUsers}
+            tools={tools}
+            currentUserId={user.id}
+            onCreateAccount={adminCreateAccount}
+            onResetPassword={adminResetPassword}
+            onToggleAdmin={adminToggleAdmin}
+            onDeleteAccount={adminDeleteAccount}
+            onDeleteTool={deleteTool}
+          />
+        )}
 
         {tab === "mine" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 28, maxWidth: 640 }}>
+            <AccountSettings user={user} onUpdated={setUser} />
             <div>
               <h2 style={sectionTitleStyle}>Tools you've listed</h2>
               {myTools.length === 0 ? <EmptyState text="You haven't added anything yet." /> : (

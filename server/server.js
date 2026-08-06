@@ -8,7 +8,7 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const db = require("./db");
-const { sendBookingNotification } = require("./mailer");
+const { sendBookingNotification, sendPasswordResetEmail } = require("./mailer");
 
 const app = express();
 app.set("trust proxy", 1); // so req.secure reflects X-Forwarded-Proto from Cloudflare Tunnel, not just the local connection
@@ -31,6 +31,7 @@ app.use("/uploads", express.static(uploadsDir, { maxAge: "30d" }));
 
 const id = () => crypto.randomBytes(9).toString("hex");
 const today = () => new Date().toISOString().slice(0, 10);
+const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s || "").trim());
 
 /* ---------- auth helpers ---------- */
 function setSession(req, res, user) {
@@ -47,7 +48,7 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: "Not signed in." });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = db.prepare("SELECT id, name, address, email FROM users WHERE id = ?").get(payload.uid);
+    const user = db.prepare("SELECT id, name, address, email, is_admin FROM users WHERE id = ?").get(payload.uid);
     if (!user) return res.status(401).json({ error: "Not signed in." });
     req.user = user;
     next();
@@ -55,8 +56,15 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Session expired. Sign in again." });
   }
 }
+function requireAdmin(req, res, next) {
+  if (!req.user.is_admin) return res.status(403).json({ error: "Admins only." });
+  next();
+}
 function publicUser(u) {
-  return { name: u.name, address: u.address, label: `${u.name} · ${u.address}` };
+  return { id: u.id, name: u.name, address: u.address, email: u.email, isAdmin: !!u.is_admin, label: `${u.name} · ${u.address}` };
+}
+function randomPassword() {
+  return crypto.randomBytes(9).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 10);
 }
 
 /* ---------- date helpers (mirrors frontend logic) ---------- */
@@ -77,6 +85,7 @@ app.post("/api/auth/signup", async (req, res) => {
   if (!name?.trim() || !address?.trim() || !email?.trim() || !password || password.length < 8) {
     return res.status(400).json({ error: "Name, address, email, and an 8+ character password are all required." });
   }
+  if (!isValidEmail(email)) return res.status(400).json({ error: "That doesn't look like a valid email address — double check it, since it's how owners will reach you." });
   const cleanEmail = email.trim().toLowerCase();
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(cleanEmail);
   if (existing) return res.status(409).json({ error: "That email already has an account. Try signing in instead." });
@@ -104,7 +113,53 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/auth/forgot", async (req, res) => {
+  const cleanEmail = (req.body?.email || "").trim().toLowerCase();
+  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(cleanEmail);
+  // Always respond the same way whether or not the account exists, so a stranger
+  // can't use this to probe which emails have accounts.
+  if (user) {
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    db.prepare("UPDATE users SET reset_token_hash = ?, reset_token_expires = ? WHERE id = ?")
+      .run(tokenHash, Date.now() + 60 * 60 * 1000, user.id); // 1 hour
+    const resetUrl = `${req.protocol}://${req.get("host")}/?reset=${rawToken}`;
+    sendPasswordResetEmail({ to: user.email, name: user.name, resetUrl }).catch((e) => console.error("Reset email failed:", e.message));
+  }
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/reset", async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password || password.length < 8) return res.status(400).json({ error: "Need a valid link and an 8+ character password." });
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const user = db.prepare("SELECT * FROM users WHERE reset_token_hash = ?").get(tokenHash);
+  if (!user || !user.reset_token_expires || user.reset_token_expires < Date.now()) {
+    return res.status(400).json({ error: "That reset link is invalid or has expired — request a new one." });
+  }
+  const hash = await bcrypt.hash(password, 10);
+  db.prepare("UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = ?").run(hash, user.id);
+  setSession(req, res, user);
+  res.json({ user: publicUser(user) });
+});
+
 app.get("/api/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
+
+app.patch("/api/me/email", requireAuth, async (req, res) => {
+  const { newEmail, currentPassword } = req.body || {};
+  if (!isValidEmail(newEmail)) return res.status(400).json({ error: "That doesn't look like a valid email address." });
+  const cleanEmail = newEmail.trim().toLowerCase();
+
+  const fullUser = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+  if (!(await bcrypt.compare(currentPassword || "", fullUser.password_hash))) {
+    return res.status(401).json({ error: "Current password is wrong." });
+  }
+  const clash = db.prepare("SELECT id FROM users WHERE email = ? AND id != ?").get(cleanEmail, req.user.id);
+  if (clash) return res.status(409).json({ error: "Another account already uses that email." });
+
+  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(cleanEmail, req.user.id);
+  res.json({ user: publicUser({ ...req.user, email: cleanEmail }) });
+});
 
 /* ================= TOOLS ================= */
 function shapeTool(r, currentUserId) {
@@ -126,23 +181,30 @@ app.get("/api/tools", requireAuth, (req, res) => {
 });
 
 app.post("/api/tools", requireAuth, (req, res) => {
-  const { name, category, condition, description, brand, model, powerType, serialNumber } = req.body || {};
+  const { name, category, condition, description, brand, model, powerType, serialNumber, ownerId } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: "Tool name is required." });
+  let effectiveOwnerId = req.user.id;
+  if (req.user.is_admin && ownerId && ownerId !== req.user.id) {
+    const targetOwner = db.prepare("SELECT id FROM users WHERE id = ?").get(ownerId);
+    if (!targetOwner) return res.status(400).json({ error: "That owner doesn't exist." });
+    effectiveOwnerId = ownerId;
+  }
   const tool = {
     id: id(), name: name.trim(), category: category || "other", condition: condition || "Good",
     description: (description || "").trim(), brand: (brand || "").trim(), model: (model || "").trim(),
     power_type: powerType || "", serial_number: (serialNumber || "").trim(),
-    owner_id: req.user.id, created_at: Date.now(),
+    owner_id: effectiveOwnerId, created_at: Date.now(),
   };
   db.prepare(`INSERT INTO tools (id, name, category, condition, description, brand, model, power_type, serial_number, owner_id, created_at)
     VALUES (@id, @name, @category, @condition, @description, @brand, @model, @power_type, @serial_number, @owner_id, @created_at)`).run(tool);
-  res.json({ tool: shapeTool({ ...tool, owner_name: req.user.name, owner_address: req.user.address }, req.user.id) });
+  const owner = db.prepare("SELECT name, address FROM users WHERE id = ?").get(effectiveOwnerId);
+  res.json({ tool: shapeTool({ ...tool, owner_name: owner.name, owner_address: owner.address }, req.user.id) });
 });
 
 app.post("/api/tools/:id/photo", requireAuth, upload.single("photo"), (req, res) => {
   const tool = db.prepare("SELECT * FROM tools WHERE id = ?").get(req.params.id);
   if (!tool) return res.status(404).json({ error: "Tool not found." });
-  if (tool.owner_id !== req.user.id) return res.status(403).json({ error: "Only the owner can change this tool's photo." });
+  if (tool.owner_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: "Only the owner (or an admin) can change this tool's photo." });
   if (!req.file) return res.status(400).json({ error: "No image received — try a JPEG or PNG under 5MB." });
 
   fs.writeFileSync(path.join(uploadsDir, `${tool.id}.jpg`), req.file.buffer);
@@ -154,7 +216,7 @@ app.post("/api/tools/:id/photo", requireAuth, upload.single("photo"), (req, res)
 app.delete("/api/tools/:id", requireAuth, (req, res) => {
   const tool = db.prepare("SELECT * FROM tools WHERE id = ?").get(req.params.id);
   if (!tool) return res.status(404).json({ error: "Tool not found." });
-  if (tool.owner_id !== req.user.id) return res.status(403).json({ error: "Only the owner can remove this tool." });
+  if (tool.owner_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: "Only the owner (or an admin) can remove this tool." });
   db.prepare("DELETE FROM tools WHERE id = ?").run(req.params.id);
   const photoPath = path.join(uploadsDir, `${tool.id}.jpg`);
   if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
@@ -207,5 +269,73 @@ app.delete("/api/bookings/:id", requireAuth, (req, res) => {
   db.prepare("DELETE FROM bookings WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
+
+/* ================= ADMIN ================= */
+app.get("/api/admin/users", requireAuth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT u.id, u.name, u.address, u.email, u.is_admin, u.created_at,
+           (SELECT COUNT(*) FROM tools WHERE owner_id = u.id) as tool_count
+    FROM users u ORDER BY u.created_at ASC
+  `).all();
+  res.json({ users: rows.map((u) => ({
+    id: u.id, name: u.name, address: u.address, email: u.email, isAdmin: !!u.is_admin,
+    toolCount: u.tool_count, createdAt: u.created_at,
+  })) });
+});
+
+app.post("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+  const { name, address, email, password } = req.body || {};
+  if (!name?.trim() || !address?.trim() || !isValidEmail(email) || !password || password.length < 8) {
+    return res.status(400).json({ error: "Name, address, a valid email, and an 8+ character password are all required." });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  if (db.prepare("SELECT id FROM users WHERE email = ?").get(cleanEmail)) {
+    return res.status(409).json({ error: "That email already has an account." });
+  }
+  const hash = await bcrypt.hash(password, 10);
+  const user = { id: id(), name: name.trim(), address: address.trim(), email: cleanEmail, password_hash: hash, created_at: Date.now() };
+  db.prepare("INSERT INTO users (id, name, address, email, password_hash, created_at) VALUES (@id, @name, @address, @email, @password_hash, @created_at)").run(user);
+  res.json({ user: { id: user.id, name: user.name, address: user.address, email: user.email, isAdmin: false, toolCount: 0, createdAt: user.created_at } });
+});
+
+app.post("/api/admin/users/:id/reset-password", requireAuth, requireAdmin, async (req, res) => {
+  const target = db.prepare("SELECT id FROM users WHERE id = ?").get(req.params.id);
+  if (!target) return res.status(404).json({ error: "Account not found." });
+  const tempPassword = randomPassword();
+  const hash = await bcrypt.hash(tempPassword, 10);
+  db.prepare("UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = ?").run(hash, target.id);
+  res.json({ tempPassword }); // shown once — not stored anywhere in plaintext, not logged
+});
+
+app.patch("/api/admin/users/:id/admin", requireAuth, requireAdmin, (req, res) => {
+  if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't change your own admin status here." });
+  const target = db.prepare("SELECT id FROM users WHERE id = ?").get(req.params.id);
+  if (!target) return res.status(404).json({ error: "Account not found." });
+  db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(req.body?.isAdmin ? 1 : 0, target.id);
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/users/:id", requireAuth, requireAdmin, (req, res) => {
+  if (req.params.id === req.user.id) return res.status(400).json({ error: "You can't remove your own account here." });
+  const target = db.prepare("SELECT id FROM users WHERE id = ?").get(req.params.id);
+  if (!target) return res.status(404).json({ error: "Account not found." });
+
+  const theirTools = db.prepare("SELECT id, photo_updated_at FROM tools WHERE owner_id = ?").all(target.id);
+  db.prepare("DELETE FROM users WHERE id = ?").run(target.id); // cascades to their tools and bookings
+  for (const t of theirTools) {
+    const p = path.join(uploadsDir, `${t.id}.jpg`);
+    if (t.photo_updated_at && fs.existsSync(p)) fs.unlinkSync(p);
+  }
+  res.json({ ok: true });
+});
+
+function syncAdminsFromEnv() {
+  const emails = (process.env.ADMIN_EMAILS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!emails.length) return;
+  const placeholders = emails.map(() => "?").join(",");
+  const result = db.prepare(`UPDATE users SET is_admin = 1 WHERE email IN (${placeholders}) AND is_admin = 0`).run(...emails);
+  if (result.changes) console.log(`[admin] promoted ${result.changes} account(s) from ADMIN_EMAILS`);
+}
+syncAdminsFromEnv();
 
 app.listen(PORT, () => console.log(`Pear Close Toolbox listening on port ${PORT}`));
