@@ -213,6 +213,26 @@ app.post("/api/tools/:id/photo", requireAuth, upload.single("photo"), (req, res)
   res.json({ photoUrl: `/uploads/${tool.id}.jpg?v=${photoUpdatedAt}` });
 });
 
+app.patch("/api/tools/:id", requireAuth, (req, res) => {
+  const tool = db.prepare("SELECT * FROM tools WHERE id = ?").get(req.params.id);
+  if (!tool) return res.status(404).json({ error: "Tool not found." });
+  if (tool.owner_id !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: "Only the owner (or an admin) can edit this tool." });
+
+  const { name, category, condition, description, brand, model, powerType, serialNumber } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: "Tool name is required." });
+
+  const updated = {
+    id: tool.id, name: name.trim(), category: category || "other", condition: condition || "Good",
+    description: (description || "").trim(), brand: (brand || "").trim(), model: (model || "").trim(),
+    power_type: powerType || "", serial_number: (serialNumber || "").trim(),
+  };
+  db.prepare(`UPDATE tools SET name=@name, category=@category, condition=@condition, description=@description,
+    brand=@brand, model=@model, power_type=@power_type, serial_number=@serial_number WHERE id=@id`).run(updated);
+
+  const owner = db.prepare("SELECT name, address FROM users WHERE id = ?").get(tool.owner_id);
+  res.json({ tool: shapeTool({ ...tool, ...updated, owner_name: owner.name, owner_address: owner.address }, req.user.id) });
+});
+
 app.delete("/api/tools/:id", requireAuth, (req, res) => {
   const tool = db.prepare("SELECT * FROM tools WHERE id = ?").get(req.params.id);
   if (!tool) return res.status(404).json({ error: "Tool not found." });

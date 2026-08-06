@@ -26,6 +26,7 @@ function Icon({ name, size = 16, style }) {
     ruler: <><rect x="3" y="7" width="18" height="10" rx="1.5" /><line x1="7" y1="7" x2="7" y2="11" /><line x1="11" y1="7" x2="11" y2="11" /><line x1="15" y1="7" x2="15" y2="11" /><line x1="19" y1="7" x2="19" y2="11" /></>,
     box: <><path d="M21 8 12 3 3 8v8l9 5 9-5Z" /><path d="M3 8l9 5 9-5" /><line x1="12" y1="13" x2="12" y2="21" /></>,
     camera: <><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" /><circle cx="12" cy="13.5" r="3.5" /></>,
+    pencil: <><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4Z" /><line x1="13" y1="6" x2="17" y2="10" /></>,
   };
   return <svg {...common}>{paths[name] || null}</svg>;
 }
@@ -436,18 +437,36 @@ function AddTool({ onAdd, onDone, onPhotoUpdated, adminUsers, currentUserId }) {
 }
 
 /* ---------- tool detail / booking ---------- */
-function ToolDetail({ tool, bookings, onClose, onReserve, onDelete, onPhotoUpdated }) {
+function ToolDetail({ tool, bookings, onClose, onReserve, onDelete, onPhotoUpdated, onEdited, isAdmin }) {
   const [selRange, setSelRange] = useState({ start: null, end: null });
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: tool.name, category: tool.category, condition: tool.condition, description: tool.description,
+    brand: tool.brand, model: tool.model, powerType: tool.powerType, serialNumber: tool.serialNumber,
+  });
+  const [editErr, setEditErr] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const canManage = tool.isMine || isAdmin;
   const na = isToolFreeOn(tool.id, toKey(today()), bookings) ? null : nextAvailable(tool.id, bookings);
 
   const details = [
     ["Brand", tool.brand], ["Model", tool.model],
     ["Power", tool.powerType], ["Serial #", tool.serialNumber],
   ].filter(([, v]) => v);
+
+  const saveEdit = async () => {
+    if (!editForm.name.trim()) { setEditErr("Tool name can't be empty."); return; }
+    setEditBusy(true); setEditErr("");
+    try {
+      const updated = await onEdited(tool.id, editForm);
+      setEditing(false);
+    } catch (e) { setEditErr(e.message); }
+    setEditBusy(false);
+  };
 
   const replacePhoto = async (file) => {
     setPhotoBusy(true); setError("");
@@ -496,25 +515,80 @@ function ToolDetail({ tool, bookings, onClose, onReserve, onDelete, onPhotoUpdat
               </div>
             )}
             <div>
-              <h2 style={{ ...sectionTitleStyle, fontSize: 22 }}>{tool.name}</h2>
-              <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{catMeta(tool.category).label} · {tool.condition} · owned by {tool.ownerName}</div>
+              {!editing ? (
+                <h2 style={{ ...sectionTitleStyle, fontSize: 22 }}>{tool.name}</h2>
+              ) : (
+                <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} style={{ ...inputStyle, fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 18, padding: "8px 10px" }} />
+              )}
+              <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>{catMeta(tool.category).label} · {tool.condition} · owned by {tool.ownerName}</div>
             </div>
           </div>
-          {!tool.photoUrl && <button onClick={onClose} style={iconBtnStyle}><Icon name="x" size={16} /></button>}
+          <div style={{ display: "flex", gap: 6 }}>
+            {canManage && !editing && (
+              <button onClick={() => setEditing(true)} style={iconBtnStyle} title="Edit details"><Icon name="pencil" size={15} /></button>
+            )}
+            {!tool.photoUrl && <button onClick={onClose} style={iconBtnStyle}><Icon name="x" size={16} /></button>}
+          </div>
         </div>
 
-        {details.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, marginTop: 14 }}>
-            {details.map(([label, value]) => (
-              <div key={label} style={{ background: "var(--bg)", borderRadius: 8, padding: "8px 11px" }}>
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--ink-soft)" }}>{label.toUpperCase()}</div>
-                <div style={{ fontSize: 13.5, color: "var(--ink)", marginTop: 2 }}>{value}</div>
+        {editing ? (
+          <div style={{ marginTop: 14, background: "var(--bg)", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <label style={labelStyle}>Category
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                {CATEGORIES.map((c) => (
+                  <button key={c.id} onClick={() => setEditForm({ ...editForm, category: c.id })} style={{ ...chipStyle, ...(editForm.category === c.id ? chipActiveStyle : {}) }}>
+                    <Icon name={CAT_ICON[c.id]} size={13} /> {c.label}
+                  </button>
+                ))}
               </div>
-            ))}
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={labelStyle}>Brand
+                <input value={editForm.brand} onChange={(e) => setEditForm({ ...editForm, brand: e.target.value })} style={inputStyle} />
+              </label>
+              <label style={labelStyle}>Model
+                <input value={editForm.model} onChange={(e) => setEditForm({ ...editForm, model: e.target.value })} style={inputStyle} />
+              </label>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label style={labelStyle}>Power
+                <select value={editForm.powerType} onChange={(e) => setEditForm({ ...editForm, powerType: e.target.value })} style={{ ...inputStyle, marginTop: 4 }}>
+                  {POWER_TYPES.map((p) => <option key={p} value={p}>{p || "Not specified"}</option>)}
+                </select>
+              </label>
+              <label style={labelStyle}>Serial number
+                <input value={editForm.serialNumber} onChange={(e) => setEditForm({ ...editForm, serialNumber: e.target.value })} style={inputStyle} />
+              </label>
+            </div>
+            <label style={labelStyle}>Condition
+              <select value={editForm.condition} onChange={(e) => setEditForm({ ...editForm, condition: e.target.value })} style={{ ...inputStyle, marginTop: 4 }}>
+                {CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label style={labelStyle}>Notes for borrowers
+              <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} rows={3} style={{ ...inputStyle, resize: "vertical", marginTop: 4 }} />
+            </label>
+            {editErr && <div style={{ fontSize: 12.5, color: "var(--rust)", display: "flex", gap: 6, alignItems: "center" }}><Icon name="alertTriangle" size={13} />{editErr}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button disabled={editBusy} onClick={saveEdit} style={{ ...primaryBtnStyle, padding: "9px 16px" }}>{editBusy ? "Saving…" : "Save changes"}</button>
+              <button onClick={() => { setEditing(false); setEditErr(""); setEditForm({ name: tool.name, category: tool.category, condition: tool.condition, description: tool.description, brand: tool.brand, model: tool.model, powerType: tool.powerType, serialNumber: tool.serialNumber }); }} style={{ ...ghostBtnStyle, padding: "9px 16px" }}>Cancel</button>
+            </div>
           </div>
+        ) : (
+          <>
+            {details.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, marginTop: 14 }}>
+                {details.map(([label, value]) => (
+                  <div key={label} style={{ background: "var(--bg)", borderRadius: 8, padding: "8px 11px" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--ink-soft)" }}>{label.toUpperCase()}</div>
+                    <div style={{ fontSize: 13.5, color: "var(--ink)", marginTop: 2 }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tool.description && <p style={{ fontSize: 14, color: "var(--ink)", lineHeight: 1.5, marginTop: 14, background: "var(--bg)", padding: "10px 13px", borderRadius: 8 }}>{tool.description}</p>}
+          </>
         )}
-
-        {tool.description && <p style={{ fontSize: 14, color: "var(--ink)", lineHeight: 1.5, marginTop: 14, background: "var(--bg)", padding: "10px 13px", borderRadius: 8 }}>{tool.description}</p>}
 
         <div style={{ marginTop: 16, fontSize: 13, fontFamily: "var(--font-mono)", color: na ? "var(--rust)" : "var(--green-dark)" }}>
           {na ? `Next free: ${fmtLong(na)}` : "Free to grab right now"}
@@ -553,7 +627,7 @@ function ToolDetail({ tool, bookings, onClose, onReserve, onDelete, onPhotoUpdat
           </button>
         </div>
 
-        {tool.isMine && (
+        {canManage && (
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
             <label style={{ ...ghostBtnStyle, display: "inline-flex", alignItems: "center", gap: 8, cursor: photoBusy ? "wait" : "pointer" }}>
               <Icon name="camera" size={13} />{photoBusy ? "Uploading…" : tool.photoUrl ? "Replace photo" : "Add a photo"}
@@ -821,6 +895,7 @@ function App() {
   const signOut = async () => { await api("/auth/logout", { method: "POST" }); setUser(null); setTools([]); setBookings([]); setAdminUsers([]); };
 
   const addTool = async (payload) => { const { tool } = await api("/tools", { method: "POST", body: payload }); setTools((prev) => [tool, ...prev]); return tool; };
+  const editTool = async (toolId, payload) => { const { tool } = await api(`/tools/${toolId}`, { method: "PATCH", body: payload }); setTools((prev) => prev.map((t) => (t.id === toolId ? tool : t))); setOpenTool((prev) => (prev && prev.id === toolId ? tool : prev)); return tool; };
   const deleteTool = async (toolId) => { await api(`/tools/${toolId}`, { method: "DELETE" }); setTools((prev) => prev.filter((t) => t.id !== toolId)); };
 
   const adminCreateAccount = async (payload) => { const { user: created } = await api("/admin/users", { method: "POST", body: payload }); setAdminUsers((prev) => [...prev, created]); };
@@ -971,7 +1046,7 @@ function App() {
         )}
       </main>
 
-      {openTool && <ToolDetail tool={openTool} bookings={bookings} onClose={() => setOpenTool(null)} onReserve={addBooking} onDelete={deleteTool} onPhotoUpdated={updateToolPhoto} />}
+      {openTool && <ToolDetail tool={openTool} bookings={bookings} onClose={() => setOpenTool(null)} onReserve={addBooking} onDelete={deleteTool} onPhotoUpdated={updateToolPhoto} onEdited={editTool} isAdmin={user.isAdmin} />}
       <VersionBadge version={version} />
     </div>
   );
