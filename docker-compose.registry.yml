@@ -7,7 +7,7 @@
 
 services:
   toolbox:
-    image: ghcr.io/OWNER/REPO:latest
+    image: ghcr.io/maanitshah/toolbox:latest
     container_name: pear-close-toolbox
     restart: unless-stopped
     ports:
