@@ -369,9 +369,10 @@ function runReminderSweep() {
   const todayStr = today();
   const tomorrowStr = addDaysStr(todayStr, 1);
 
-  // T-24h reminder: bookings due back tomorrow, not yet returned, not already reminded
+  // T-24h reminder: bookings due back tomorrow, not yet returned, not already reminded,
+  // and long enough to be worth a heads-up (skip same-day/overnight 1-day rentals).
   const dueSoon = db.prepare(`
-    SELECT b.id, b.end_date, t.name as tool_name,
+    SELECT b.id, b.start_date, b.end_date, t.name as tool_name,
            bu.name as borrower_name, bu.email as borrower_email,
            ou.name as owner_name
     FROM bookings b
@@ -379,7 +380,10 @@ function runReminderSweep() {
     JOIN users bu ON bu.id = b.borrower_id
     JOIN users ou ON ou.id = t.owner_id
     WHERE b.end_date = ? AND b.returned_at IS NULL AND b.reminder_sent_at IS NULL
-  `).all(tomorrowStr);
+  `).all(tomorrowStr).filter((b) => {
+    const days = (new Date(b.end_date + "T00:00:00Z") - new Date(b.start_date + "T00:00:00Z")) / 86400000;
+    return days >= 2; // e.g. borrow the 6th, return the 7th = 1 day, no reminder needed
+  });
   for (const b of dueSoon) {
     sendReturnReminder({ to: b.borrower_email, name: b.borrower_name, toolName: b.tool_name, dueDate: b.end_date, ownerName: b.owner_name })
       .catch((e) => console.error("Reminder email failed:", e.message));
