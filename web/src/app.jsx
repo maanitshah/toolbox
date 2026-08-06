@@ -834,6 +834,40 @@ function AdminPanel({ adminUsers, tools, currentUserId, onCreateAccount, onReset
   );
 }
 
+function bookingStatus(b) {
+  if (b.returnedAt) return "returned";
+  const t = toKey(today());
+  if (b.end < t) return "overdue";
+  if (b.start <= t) return "active";
+  return "upcoming";
+}
+const STATUS_META = {
+  upcoming: { label: "Upcoming", color: "var(--ink-soft)" },
+  active: { label: "Checked out", color: "var(--amber-dark)" },
+  overdue: { label: "Overdue", color: "var(--rust)" },
+  returned: { label: "Returned", color: "var(--green-dark)" },
+};
+
+function BookingRow({ booking, toolName, otherPartyLabel, onCancel, onCheckin }) {
+  const status = bookingStatus(booking);
+  const meta = STATUS_META[status];
+  return (
+    <div style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 9, padding: "11px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", opacity: status === "returned" ? 0.6 : 1 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 14.5 }}>{toolName}</div>
+        <div style={{ fontSize: 12.5, color: "var(--ink-soft)", fontFamily: "var(--font-mono)" }}>{fmtShort(booking.start)} – {fmtShort(booking.end)}{otherPartyLabel ? ` · ${otherPartyLabel}` : ""}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: meta.color }}>{meta.label}</span>
+        {status === "upcoming" && onCancel && <button onClick={() => onCancel(booking.id)} style={{ ...ghostBtnStyle, padding: "6px 11px" }}>Cancel</button>}
+        {(status === "active" || status === "overdue") && onCheckin && booking.canCheckin && (
+          <button onClick={() => onCheckin(booking.id)} style={{ ...ghostBtnStyle, padding: "6px 11px", ...(status === "overdue" ? { color: "var(--rust)", borderColor: "var(--rust)" } : {}) }}>Mark returned</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ text }) {
   return <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: "26px 16px", textAlign: "center", color: "var(--ink-soft)", fontSize: 13.5 }}>{text}</div>;
 }
@@ -908,6 +942,7 @@ function App() {
   };
   const addBooking = async (payload) => { const { booking } = await api("/bookings", { method: "POST", body: payload }); setBookings((prev) => [...prev, booking]); setOpenTool(null); };
   const cancelBooking = async (bookingId) => { await api(`/bookings/${bookingId}`, { method: "DELETE" }); setBookings((prev) => prev.filter((b) => b.id !== bookingId)); };
+  const checkinBooking = async (bookingId) => { const { returnedAt } = await api(`/bookings/${bookingId}/checkin`, { method: "POST" }); setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, returnedAt } : b))); };
   const updateToolPhoto = (toolId, photoUrl) => {
     setTools((prev) => prev.map((t) => (t.id === toolId ? { ...t, photoUrl } : t)));
     setOpenTool((prev) => (prev && prev.id === toolId ? { ...prev, photoUrl } : prev));
@@ -929,6 +964,8 @@ function App() {
 
   const myTools = tools.filter((t) => t.isMine);
   const myBookings = bookings.filter((b) => b.isMine).sort((a, b) => a.start.localeCompare(b.start));
+  const myToolIds = new Set(myTools.map((t) => t.id));
+  const toolsOut = bookings.filter((b) => myToolIds.has(b.toolId) && !b.isMine).sort((a, b) => a.start.localeCompare(b.start));
 
   return (
     <div style={shellStyle}>
@@ -1028,20 +1065,23 @@ function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
                   {myBookings.map((b) => {
                     const t = tools.find((x) => x.id === b.toolId);
-                    const past = b.end < toKey(today());
-                    return (
-                      <div key={b.id} style={{ background: "var(--bg-card)", border: "1px solid var(--line)", borderRadius: 9, padding: "11px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: past ? 0.55 : 1 }}>
-                        <div>
-                          <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 14.5 }}>{t ? t.name : "Removed tool"}</div>
-                          <div style={{ fontSize: 12.5, color: "var(--ink-soft)", fontFamily: "var(--font-mono)" }}>{fmtShort(b.start)} – {fmtShort(b.end)}</div>
-                        </div>
-                        {!past && <button onClick={() => cancelBooking(b.id)} style={{ ...ghostBtnStyle, padding: "6px 11px" }}>Cancel</button>}
-                      </div>
-                    );
+                    return <BookingRow key={b.id} booking={b} toolName={t ? t.name : "Removed tool"} otherPartyLabel={t ? t.ownerName.split("·")[0].trim() : ""} onCancel={cancelBooking} onCheckin={checkinBooking} />;
                   })}
                 </div>
               )}
             </div>
+            {toolsOut.length > 0 && (
+              <div>
+                <h2 style={sectionTitleStyle}>Tools out with neighbors</h2>
+                <p style={{ color: "var(--ink-soft)", fontSize: 13, marginTop: -4, marginBottom: 12 }}>Bookings on things you've listed. Mark returned once you've got it back.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {toolsOut.map((b) => {
+                    const t = tools.find((x) => x.id === b.toolId);
+                    return <BookingRow key={b.id} booking={b} toolName={t ? t.name : "Removed tool"} otherPartyLabel={b.borrowerName.split("·")[0].trim()} onCheckin={checkinBooking} />;
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

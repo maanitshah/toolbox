@@ -47,4 +47,19 @@ async function sendPasswordResetEmail({ to, name, resetUrl }) {
   });
 }
 
-module.exports = { sendMail, sendBookingNotification, sendPasswordResetEmail };
+async function sendReturnReminder({ to, name, toolName, dueDate, ownerName }) {
+  await sendMail({
+    to,
+    subject: `Reminder: ${toolName} is due back tomorrow`,
+    text: `Hi ${name.split(" ")[0]},\n\nJust a heads up — your Pear Close Toolbox rental of ${toolName} is due back tomorrow (${dueDate}).\n\nPlease return it to ${ownerName} by then, or mark it returned early in the app if you're already done with it.\n\n— Pear Close Toolbox`,
+  });
+}
+
+async function sendOverdueNotice({ to, name, toolName, dueDate, otherPartyName, isOwner }) {
+  const text = isOwner
+    ? `Hi ${name.split(" ")[0]},\n\nJust a heads up — ${toolName} was due back from ${otherPartyName} on ${dueDate} and hasn't been marked returned yet. You may want to follow up with them directly.\n\n— Pear Close Toolbox`
+    : `Hi ${name.split(" ")[0]},\n\n${toolName} was due back on ${dueDate} and hasn't been marked as returned yet. If you still have it, please return it to ${otherPartyName} as soon as you can.\n\n— Pear Close Toolbox`;
+  await sendMail({ to, subject: `${toolName} is overdue`, text });
+}
+
+module.exports = { sendMail, sendBookingNotification, sendPasswordResetEmail, sendReturnReminder, sendOverdueNotice };

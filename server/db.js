@@ -52,5 +52,8 @@ ensureColumn("tools", "photo_updated_at", "photo_updated_at INTEGER");
 ensureColumn("users", "reset_token_hash", "reset_token_hash TEXT");
 ensureColumn("users", "reset_token_expires", "reset_token_expires INTEGER");
 ensureColumn("users", "is_admin", "is_admin INTEGER DEFAULT 0");
+ensureColumn("bookings", "returned_at", "returned_at INTEGER");
+ensureColumn("bookings", "reminder_sent_at", "reminder_sent_at INTEGER");
+ensureColumn("bookings", "overdue_sent_at", "overdue_sent_at INTEGER");
 
 module.exports = db;

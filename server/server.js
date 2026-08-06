@@ -8,7 +8,7 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const db = require("./db");
-const { sendBookingNotification, sendPasswordResetEmail } = require("./mailer");
+const { sendBookingNotification, sendPasswordResetEmail, sendReturnReminder, sendOverdueNotice } = require("./mailer");
 
 const app = express();
 app.set("trust proxy", 1); // so req.secure reflects X-Forwarded-Proto from Cloudflare Tunnel, not just the local connection
@@ -31,6 +31,7 @@ app.use("/uploads", express.static(uploadsDir, { maxAge: "30d" }));
 
 const id = () => crypto.randomBytes(9).toString("hex");
 const today = () => new Date().toISOString().slice(0, 10);
+const addDaysStr = (dateStr, n) => { const d = new Date(dateStr + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const isValidEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((s || "").trim());
 
 /* ---------- auth helpers ---------- */
@@ -246,14 +247,16 @@ app.delete("/api/tools/:id", requireAuth, (req, res) => {
 /* ================= BOOKINGS ================= */
 app.get("/api/bookings", requireAuth, (req, res) => {
   const rows = db.prepare(`
-    SELECT b.id, b.tool_id, b.start_date, b.end_date, b.created_at,
-           u.id as borrower_id, u.name as borrower_name, u.address as borrower_address
-    FROM bookings b JOIN users u ON u.id = b.borrower_id
+    SELECT b.id, b.tool_id, b.start_date, b.end_date, b.created_at, b.returned_at,
+           u.id as borrower_id, u.name as borrower_name, u.address as borrower_address,
+           t.owner_id as tool_owner_id
+    FROM bookings b JOIN users u ON u.id = b.borrower_id JOIN tools t ON t.id = b.tool_id
     ORDER BY b.start_date ASC
   `).all();
   res.json({ bookings: rows.map((r) => ({
-    id: r.id, toolId: r.tool_id, start: r.start_date, end: r.end_date,
-    borrowerId: r.borrower_id, borrowerName: `${r.borrower_name} · ${r.borrower_address}`, isMine: r.borrower_id === req.user.id,
+    id: r.id, toolId: r.tool_id, start: r.start_date, end: r.end_date, returnedAt: r.returned_at,
+    borrowerId: r.borrower_id, borrowerName: `${r.borrower_name} · ${r.borrower_address}`,
+    isMine: r.borrower_id === req.user.id, canCheckin: r.borrower_id === req.user.id || r.tool_owner_id === req.user.id || !!req.user.is_admin,
   })) });
 });
 
@@ -279,7 +282,18 @@ app.post("/api/bookings", requireAuth, async (req, res) => {
     borrowerName: publicUser(req.user).label, toolName: toolLabel, start, end,
   }).catch((e) => console.error("Email notify failed:", e.message));
 
-  res.json({ booking: { id: booking.id, toolId, start, end, borrowerName: publicUser(req.user).label, isMine: true } });
+  res.json({ booking: { id: booking.id, toolId, start, end, returnedAt: null, borrowerId: req.user.id, borrowerName: publicUser(req.user).label, isMine: true, canCheckin: true } });
+});
+
+app.post("/api/bookings/:id/checkin", requireAuth, (req, res) => {
+  const booking = db.prepare("SELECT * FROM bookings WHERE id = ?").get(req.params.id);
+  if (!booking) return res.status(404).json({ error: "Booking not found." });
+  const tool = db.prepare("SELECT owner_id FROM tools WHERE id = ?").get(booking.tool_id);
+  const allowed = booking.borrower_id === req.user.id || (tool && tool.owner_id === req.user.id) || req.user.is_admin;
+  if (!allowed) return res.status(403).json({ error: "Only the borrower, the tool's owner, or an admin can mark this returned." });
+  const returnedAt = Date.now();
+  db.prepare("UPDATE bookings SET returned_at = ? WHERE id = ?").run(returnedAt, booking.id);
+  res.json({ returnedAt });
 });
 
 app.delete("/api/bookings/:id", requireAuth, (req, res) => {
@@ -349,6 +363,49 @@ app.delete("/api/admin/users/:id", requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+function runReminderSweep() {
+  const todayStr = today();
+  const tomorrowStr = addDaysStr(todayStr, 1);
+
+  // T-24h reminder: bookings due back tomorrow, not yet returned, not already reminded
+  const dueSoon = db.prepare(`
+    SELECT b.id, b.end_date, t.name as tool_name,
+           bu.name as borrower_name, bu.email as borrower_email,
+           ou.name as owner_name
+    FROM bookings b
+    JOIN tools t ON t.id = b.tool_id
+    JOIN users bu ON bu.id = b.borrower_id
+    JOIN users ou ON ou.id = t.owner_id
+    WHERE b.end_date = ? AND b.returned_at IS NULL AND b.reminder_sent_at IS NULL
+  `).all(tomorrowStr);
+  for (const b of dueSoon) {
+    sendReturnReminder({ to: b.borrower_email, name: b.borrower_name, toolName: b.tool_name, dueDate: b.end_date, ownerName: b.owner_name })
+      .catch((e) => console.error("Reminder email failed:", e.message));
+    db.prepare("UPDATE bookings SET reminder_sent_at = ? WHERE id = ?").run(Date.now(), b.id);
+  }
+
+  // Overdue: end date already passed, not returned, not already flagged overdue
+  const overdue = db.prepare(`
+    SELECT b.id, b.end_date, t.name as tool_name,
+           bu.name as borrower_name, bu.email as borrower_email,
+           ou.name as owner_name, ou.email as owner_email
+    FROM bookings b
+    JOIN tools t ON t.id = b.tool_id
+    JOIN users bu ON bu.id = b.borrower_id
+    JOIN users ou ON ou.id = t.owner_id
+    WHERE b.end_date < ? AND b.returned_at IS NULL AND b.overdue_sent_at IS NULL
+  `).all(todayStr);
+  for (const b of overdue) {
+    sendOverdueNotice({ to: b.borrower_email, name: b.borrower_name, toolName: b.tool_name, dueDate: b.end_date, otherPartyName: b.owner_name, isOwner: false })
+      .catch((e) => console.error("Overdue email (borrower) failed:", e.message));
+    sendOverdueNotice({ to: b.owner_email, name: b.owner_name, toolName: b.tool_name, dueDate: b.end_date, otherPartyName: b.borrower_name, isOwner: true })
+      .catch((e) => console.error("Overdue email (owner) failed:", e.message));
+    db.prepare("UPDATE bookings SET overdue_sent_at = ? WHERE id = ?").run(Date.now(), b.id);
+  }
+
+  if (dueSoon.length || overdue.length) console.log(`[reminders] sweep: ${dueSoon.length} due-tomorrow, ${overdue.length} newly overdue`);
+}
+
 function syncAdminsFromEnv() {
   const emails = (process.env.ADMIN_EMAILS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!emails.length) return;
@@ -358,4 +415,10 @@ function syncAdminsFromEnv() {
 }
 syncAdminsFromEnv();
 
-app.listen(PORT, () => console.log(`Pear Close Toolbox listening on port ${PORT}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Pear Close Toolbox listening on port ${PORT}`));
+  setTimeout(runReminderSweep, 15 * 1000); // once shortly after boot
+  setInterval(runReminderSweep, 60 * 60 * 1000); // then hourly
+}
+
+module.exports = { app, runReminderSweep };
