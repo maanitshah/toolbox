@@ -1,0 +1,11 @@
+services:
+  toolbox:
+    build: .
+    container_name: pear-close-toolbox
+    restart: unless-stopped
+    ports:
+      - "3500:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env

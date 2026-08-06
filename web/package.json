@@ -1,0 +1,16 @@
+{
+  "name": "pear-close-toolbox-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Build-only package. Bundles the frontend so the running app has zero runtime dependency on any CDN.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

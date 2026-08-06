@@ -1,0 +1,18 @@
+# Use this instead of docker-compose.yml once GitHub Actions is publishing images.
+# Updating then becomes: docker compose pull && docker compose up -d
+# — no build step, no compiling on the NAS, just downloading the finished image.
+#
+# Replace OWNER/REPO below with your actual GitHub username/repo, e.g.
+# ghcr.io/maanit/pear-close-toolbox:latest
+
+services:
+  toolbox:
+    image: ghcr.io/OWNER/REPO:latest
+    container_name: pear-close-toolbox
+    restart: unless-stopped
+    ports:
+      - "3500:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env

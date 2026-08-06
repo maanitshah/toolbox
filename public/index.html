@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#4F7A3D" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Pear Close Toolbox</title>
+<link rel="icon" href="data:,">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+  :root {
+    --bg: #EDE6D6; --bg-card: #FBF8F0; --ink: #24291F; --ink-soft: #6B6B58;
+    --green: #4F7A3D; --green-dark: #395A2B; --amber: #E0952E; --amber-dark: #B8721D;
+    --rust: #B5442E; --line: #CDC3A6;
+    --font-display: 'Oswald', sans-serif; --font-body: 'Work Sans', sans-serif; --font-mono: 'IBM Plex Mono', monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; overscroll-behavior-y: none; }
+
+  /* 16px minimum stops iOS Safari from zooming in on focus */
+  input, select, textarea, button { font-family: inherit; font-size: 16px; }
+  input:focus, select:focus, textarea:focus { border-color: var(--green); }
+
+  /* Touch targets should be at least ~40px tall on phones */
+  button { min-height: 38px; touch-action: manipulation; }
+
+  .tag-card { position: relative; background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 14px 14px; box-shadow: 0 1px 0 rgba(36,41,31,0.04); transition: transform .12s ease, box-shadow .12s ease; overflow: hidden; }
+  .tag-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(36,41,31,0.12); }
+  .tag-hole { position: absolute; top: -7px; left: 50%; transform: translateX(-50%); width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 1.5px solid var(--line); z-index: 2; }
+  .tag-photo { width: calc(100% + 28px); margin: -16px -14px 12px; height: 130px; object-fit: cover; display: block; }
+
+  .nav-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .nav-scroll::-webkit-scrollbar { display: none; }
+
+  /* Phone-width tweaks */
+  @media (max-width: 640px) {
+    .app-header { padding: 12px 14px !important; }
+    .app-main { padding: 14px !important; }
+    .app-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+    .modal-sheet { max-height: 94vh !important; padding: 18px !important; padding-bottom: max(18px, env(safe-area-inset-bottom)) !important; }
+    .icon-btn { min-width: 40px; min-height: 40px; }
+  }
+  @media (max-width: 420px) {
+    .app-grid { grid-template-columns: 1fr !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="/app.bundle.js"></script>
+</body>
+</html>
