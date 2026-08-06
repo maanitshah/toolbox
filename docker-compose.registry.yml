@@ -7,7 +7,8 @@
 
 services:
   toolbox:
-    image: ghcr.io/maanitshah/toolbox:latest
+    image: ghcr.io/OWNER/REPO:latest
+    pull_policy: always
     container_name: pear-close-toolbox
     restart: unless-stopped
     ports:
