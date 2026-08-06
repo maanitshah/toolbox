@@ -299,7 +299,9 @@ app.post("/api/bookings/:id/checkin", requireAuth, (req, res) => {
 app.delete("/api/bookings/:id", requireAuth, (req, res) => {
   const booking = db.prepare("SELECT * FROM bookings WHERE id = ?").get(req.params.id);
   if (!booking) return res.status(404).json({ error: "Booking not found." });
-  if (booking.borrower_id !== req.user.id) return res.status(403).json({ error: "Only the borrower can cancel this." });
+  const tool = db.prepare("SELECT owner_id FROM tools WHERE id = ?").get(booking.tool_id);
+  const allowed = booking.borrower_id === req.user.id || (tool && tool.owner_id === req.user.id) || req.user.is_admin;
+  if (!allowed) return res.status(403).json({ error: "Only the borrower, the tool's owner, or an admin can cancel this." });
   db.prepare("DELETE FROM bookings WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });

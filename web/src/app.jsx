@@ -859,7 +859,7 @@ function BookingRow({ booking, toolName, otherPartyLabel, onCancel, onCheckin })
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: meta.color }}>{meta.label}</span>
-        {status === "upcoming" && onCancel && <button onClick={() => onCancel(booking.id)} style={{ ...ghostBtnStyle, padding: "6px 11px" }}>Cancel</button>}
+        {status === "upcoming" && onCancel && booking.canCheckin && <button onClick={() => onCancel(booking.id)} style={{ ...ghostBtnStyle, padding: "6px 11px" }}>Cancel</button>}
         {(status === "active" || status === "overdue") && onCheckin && booking.canCheckin && (
           <button onClick={() => onCheckin(booking.id)} style={{ ...ghostBtnStyle, padding: "6px 11px", ...(status === "overdue" ? { color: "var(--rust)", borderColor: "var(--rust)" } : {}) }}>Mark returned</button>
         )}
@@ -1077,7 +1077,7 @@ function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {toolsOut.map((b) => {
                     const t = tools.find((x) => x.id === b.toolId);
-                    return <BookingRow key={b.id} booking={b} toolName={t ? t.name : "Removed tool"} otherPartyLabel={b.borrowerName.split("·")[0].trim()} onCheckin={checkinBooking} />;
+                    return <BookingRow key={b.id} booking={b} toolName={t ? t.name : "Removed tool"} otherPartyLabel={b.borrowerName.split("·")[0].trim()} onCancel={cancelBooking} onCheckin={checkinBooking} />;
                   })}
                 </div>
               </div>
